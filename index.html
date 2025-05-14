@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Particle Morphing with Drag</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: 'Courier New', Courier, monospace;
+            color: #fff;
+        }
+
+        #particleCanvas {
+            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+            cursor: grab; /* Initial cursor for dragging */
+        }
+
+        #info-display {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 8px 15px;
+            background-color: rgba(20, 20, 40, 0.8);
+            border: 1px solid #444;
+            border-radius: 5px;
+            font-size: 14px;
+            color: #00ffff; /* Cyan text */
+            z-index: 10;
+        }
+
+        #controls {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: rgba(20, 20, 40, 0.8); /* Dark blue-grey, semi-transparent */
+            padding: 15px;
+            border-radius: 10px;
+            border: 1px solid #444;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+            z-index: 10;
+        }
+
+        #changeShapeButton {
+            background-color: #007bff; /* Blue */
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 16px;
+            transition: background-color 0.3s ease;
+        }
+
+        #changeShapeButton:hover {
+            background-color: #0056b3; /* Darker blue */
+        }
+
+        #color-buttons {
+            display: flex;
+            gap: 10px;
+        }
+
+        .color-button {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            border: 2px solid #fff;
+            cursor: pointer;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .color-button:hover {
+            transform: scale(1.1);
+            box-shadow: 0 0 10px #fff;
+        }
+
+        .color-button.active {
+            box-shadow: 0 0 15px #00ffff, 0 0 5px #fff inset;
+            border-color: #00ffff;
+        }
+    </style>
+</head>
+<body>
+    <div id="info-display">Shape: Sphere</div>
+    <canvas id="particleCanvas"></canvas>
+    <div id="controls">
+        <button id="changeShapeButton">Change Shape</button>
+        <div id="color-buttons">
+            <button class="color-button" data-color="fire" style="background: linear-gradient(45deg, #ff8c00, #ffd700, #ff4500);"></button>
+            <button class="color-button" data-color="ice" style="background: linear-gradient(45deg, #87cefa, #add8e6, #ffffff);"></button>
+            <button class="color-button" data-color="forest" style="background: linear-gradient(45deg, #228b22, #32cd32, #006400);"></button>
+            <button class="color-button" data-color="rainbow" style="background: linear-gradient(45deg, red, orange, yellow, green, blue, indigo, violet);"></button>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const canvas = document.getElementById('particleCanvas');
+            const ctx = canvas.getContext('2d');
+            const infoDisplay = document.getElementById('info-display');
+            const changeShapeButton = document.getElementById('changeShapeButton');
+            const colorButtons = document.querySelectorAll('.color-button');
+
+            let width = canvas.width = window.innerWidth;
+            let height = canvas.height = window.innerHeight;
+
+            const NUM_PARTICLES = 8000;
+            const particles = [];
+            let currentShapeIndex = 0;
+            let isMorphing = false;
+            let morphProgress = 0;
+            const MORPH_DURATION = 120;
+
+            let angleX = 0;
+            let angleY = 0;
+            const AUTO_ROTATION_SPEED_Y = 0.003; // Auto-rotation speed for Y-axis
+            const PERSPECTIVE = width * 0.8;
+            const PARTICLE_BASE_SIZE = 1.5;
+
+            let currentColorTheme = 'fire';
+
+            // --- Variables for mouse dragging ---
+            let isDragging = false;
+            let lastMouseX = 0;
+            let lastMouseY = 0;
+            const DRAG_SENSITIVITY = 0.005; // Adjust for faster/slower drag rotation
+
+            class Particle {
+                constructor(x, y, z) {
+                    this.homeX = x;
+                    this.homeY = y;
+                    this.homeZ = z;
+
+                    this.currentX = Math.random() * width - width / 2;
+                    this.currentY = Math.random() * height - height / 2;
+                    this.currentZ = Math.random() * width - width / 2;
+
+                    this.targetX = x;
+                    this.targetY = y;
+                    this.targetZ = z;
+                }
+
+                setNewHome(x, y, z) {
+                    this.homeX = x;
+                    this.homeY = y;
+                    this.homeZ = z;
+                }
+
+                update() {
+                    if (isMorphing) {
+                        const ease = (t) => t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+                        const t = ease(morphProgress / MORPH_DURATION);
+
+                        this.currentX += (this.targetX - this.currentX) * t * 0.1 + (this.targetX - this.currentX) * (1-t) * 0.01;
+                        this.currentY += (this.targetY - this.currentY) * t * 0.1 + (this.targetY - this.currentY) * (1-t) * 0.01;
+                        this.currentZ += (this.targetZ - this.currentZ) * t * 0.1 + (this.targetZ - this.currentZ) * (1-t) * 0.01;
+                        
+                        if (morphProgress === MORPH_DURATION -1) {
+                            this.currentX = this.targetX;
+                            this.currentY = this.targetY;
+                            this.currentZ = this.targetZ;
+                        }
+                    } else {
+                        this.currentX = this.targetX;
+                        this.currentY = this.targetY;
+                        this.currentZ = this.targetZ;
+                    }
+                }
+
+                draw(ctx) {
+                    this.update();
+
+                    const cosX = Math.cos(angleX);
+                    const sinX = Math.sin(angleX);
+                    const cosY = Math.cos(angleY);
+                    const sinY = Math.sin(angleY);
+
+                    const y1 = this.currentY * cosX - this.currentZ * sinX;
+                    const z1 = this.currentY * sinX + this.currentZ * cosX;
+                    const x1 = this.currentX * cosY - z1 * sinY;
+                    const z2 = this.currentX * sinY + z1 * cosY;
+
+                    const scale = PERSPECTIVE / (PERSPECTIVE + z2);
+                    const x2d = x1 * scale + width / 2;
+                    const y2d = y1 * scale + height / 2;
+                    const size = Math.max(0.1, PARTICLE_BASE_SIZE * scale);
+
+                    if (x2d >= 0 && x2d <= width && y2d >= 0 && y2d <= height) {
+                        ctx.beginPath();
+                        ctx.arc(x2d, y2d, size, 0, Math.PI * 2);
+                        ctx.fillStyle = getColor(this.currentX, this.currentY, this.currentZ, z2, scale);
+                        ctx.fill();
+                    }
+                }
+            }
+
+            function getColor(x, y, z, depthZ, scale) {
+                let hue, saturation, lightness;
+                saturation = 100;
+                lightness = Math.max(20, Math.min(80, 50 + depthZ * 0.05 + scale * 20));
+
+                switch (currentColorTheme) {
+                    case 'fire':
+                        hue = 30 + (Math.sin(x * 0.01) + Math.cos(y * 0.01)) * 15;
+                        lightness = Math.max(40, Math.min(70, 50 + z * 0.03));
+                        saturation = 90 + Math.sin(z*0.05)*10;
+                        break;
+                    case 'ice':
+                        hue = 180 + (Math.sin(x * 0.01) + Math.cos(y * 0.01)) * 20;
+                        lightness = Math.max(50, Math.min(90, 70 + z * 0.03));
+                        break;
+                    case 'forest':
+                        hue = 120 + (Math.sin(x * 0.01) + Math.cos(y * 0.01)) * 30;
+                        lightness = Math.max(30, Math.min(60, 40 + z * 0.02));
+                        break;
+                    case 'rainbow':
+                        hue = ( (x + y + z) * 0.1 ) % 360;
+                        lightness = 50 + Math.sin( (x+y-z) * 0.01) * 15;
+                        break;
+                    default:
+                        hue = 30;
+                }
+                return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+            }
+
+            const shapeFunctions = [
+                // 0: Sphere
+                () => {
+                    const points = [];
+                    const radius = Math.min(width, height) * 0.3;
+                    for (let i = 0; i < NUM_PARTICLES; i++) {
+                        const phi = Math.acos(-1 + (2 * i) / NUM_PARTICLES);
+                        const theta = Math.sqrt(NUM_PARTICLES * Math.PI) * phi;
+                        points.push({
+                            x: radius * Math.sin(phi) * Math.cos(theta),
+                            y: radius * Math.sin(phi) * Math.sin(theta),
+                            z: radius * Math.cos(phi)
+                        });
+                    }
+                    return points;
+                },
+                // 1: Cube
+                () => {
+                    const points = [];
+                    const s = Math.min(width, height) * 0.3; // side length / 2
+                    const pointsPerFace = Math.floor(NUM_PARTICLES / 6);
+                    for (let face = 0; face < 6; face++) {
+                        for (let i = 0; i < pointsPerFace; i++) {
+                            let x, y, z;
+                            const u = (Math.random() - 0.5) * 2 * s;
+                            const v = (Math.random() - 0.5) * 2 * s;
+                            if (face === 0) { x = s; y = u; z = v; }       // +X
+                            else if (face === 1) { x = -s; y = u; z = v; } // -X
+                            else if (face === 2) { y = s; x = u; z = v; }  // +Y
+                            else if (face === 3) { y = -s; x = u; z = v; } // -Y
+                            else if (face === 4) { z = s; x = u; y = v; }  // +Z
+                            else { z = -s; x = u; y = v; }                 // -Z
+                            points.push({ x, y, z });
+                        }
+                    }
+                    while (points.length < NUM_PARTICLES) {
+                         points.push({ x: (Math.random() - 0.5) * 2 * s, y: (Math.random() - 0.5) * 2 * s, z: (Math.random() - 0.5) * 2 * s});
+                    }
+                    return points;
+                },
+                // 2: Pyramid
+                () => {
+                    const points = [];
+                    const h = Math.min(width, height) * 0.4; // height
+                    const baseSize = Math.min(width, height) * 0.3; // half base width
+                    const pointsOnBase = Math.floor(NUM_PARTICLES * 0.3);
+                    for (let i = 0; i < pointsOnBase; i++) {
+                        points.push({
+                            x: (Math.random() - 0.5) * 2 * baseSize,
+                            y: -h / 2, 
+                            z: (Math.random() - 0.5) * 2 * baseSize
+                        });
+                    }
+                    const pointsOnSides = NUM_PARTICLES - pointsOnBase;
+                    for (let i = 0; i < pointsOnSides; i++) {
+                        const r = Math.random(); 
+                        const currentH = -h/2 + r * h;
+                        const currentScale = (1 - r); 
+                        const side = Math.floor(Math.random() * 4);
+                        let x, z;
+                        const randEdge = (Math.random() - 0.5) * 2 * baseSize * currentScale;
+                        if (side === 0) { x = baseSize * currentScale; z = randEdge; } 
+                        else if (side === 1) { x = -baseSize * currentScale; z = randEdge; }
+                        else if (side === 2) { z = baseSize * currentScale; x = randEdge; } 
+                        else { z = -baseSize * currentScale; x = randEdge; }
+                        points.push({ x, y: currentH, z });
+                    }
+                    return points;
+                },
+                // 3: Torus
+                () => {
+                    const points = [];
+                    const R = Math.min(width, height) * 0.25; 
+                    const r_minor = Math.min(width, height) * 0.1;  // Renamed 'r' to 'r_minor'
+                    for (let i = 0; i < NUM_PARTICLES; i++) {
+                        const u = Math.random() * 2 * Math.PI; 
+                        const v = Math.random() * 2 * Math.PI; 
+                        points.push({
+                            x: (R + r_minor * Math.cos(v)) * Math.cos(u),
+                            y: (R + r_minor * Math.cos(v)) * Math.sin(u),
+                            z: r_minor * Math.sin(v)
+                        });
+                    }
+                    return points;
+                },
+                // 4: Galaxy
+                () => {
+                    const points = [];
+                    const diskRadius = Math.min(width, height) * 0.4;
+                    const bulgeRadius = diskRadius * 0.2;
+                    const arms = 2;
+                    const armTightness = 0.15; 
+                    for (let i = 0; i < NUM_PARTICLES; i++) {
+                        let r_gal, theta_gal, x_gal, y_gal, z_gal; // Prefixed to avoid potential scope issues
+                        if (Math.random() < 0.2) { 
+                            const phi_gal = Math.acos(-1 + (2 * Math.random()));
+                            const th_gal = Math.sqrt(NUM_PARTICLES * Math.PI) * phi_gal * Math.random(); 
+                            r_gal = Math.random() * bulgeRadius;
+                            x_gal = r_gal * Math.sin(phi_gal) * Math.cos(th_gal);
+                            y_gal = r_gal * Math.sin(phi_gal) * Math.sin(th_gal);
+                            z_gal = r_gal * Math.cos(phi_gal) * 0.5; 
+                        } else { 
+                            r_gal = Math.random() * diskRadius;
+                            const armAngle = Math.floor(Math.random() * arms) * (2 * Math.PI / arms);
+                            theta_gal = armAngle + Math.log(r_gal / (diskRadius * 0.1) + 1) / armTightness + (Math.random() - 0.5) * 0.5;
+                            x_gal = r_gal * Math.cos(theta_gal);
+                            y_gal = r_gal * Math.sin(theta_gal);
+                            z_gal = (Math.random() - 0.5) * diskRadius * 0.08 * (1 - r_gal/diskRadius); 
+                        }
+                        points.push({ x: x_gal, y: y_gal, z: z_gal });
+                    }
+                    return points;
+                },
+                // 5: Wave
+                () => {
+                    const points = [];
+                    const planeSize = Math.min(width, height) * 0.4;
+                    const waveAmplitude = planeSize * 0.15;
+                    const waveFrequency = 5 / planeSize;
+                    for (let i = 0; i < NUM_PARTICLES; i++) {
+                        const r_wave = Math.sqrt(Math.random()) * planeSize; 
+                        const angle_wave = Math.random() * Math.PI * 2;
+                        const x_wave = r_wave * Math.cos(angle_wave);
+                        const y_wave = r_wave * Math.sin(angle_wave); 
+                        const distFromCenter = Math.sqrt(x_wave * x_wave + y_wave * y_wave);
+                        const z_wave = waveAmplitude * Math.sin(distFromCenter * waveFrequency);
+                        points.push({ x: x_wave, y: y_wave, z: z_wave });
+                    }
+                    return points;
+                }
+            ];
+            const shapeNames = ["Sphere", "Cube", "Pyramid", "Torus", "Galaxy", "Wave"];
+
+            function initParticles() {
+                const initialShapePoints = shapeFunctions[currentShapeIndex]();
+                for (let i = 0; i < NUM_PARTICLES; i++) {
+                    const p = initialShapePoints[i % initialShapePoints.length];
+                    particles[i] = new Particle(p.x, p.y, p.z);
+                }
+                updateInfoDisplay();
+            }
+            
+            function triggerMorph(newShapeIndex) {
+                if (isMorphing) return;
+
+                isMorphing = true;
+                morphProgress = 0;
+                currentShapeIndex = newShapeIndex;
+                infoDisplay.textContent = "Morphing...";
+
+                const newShapePoints = shapeFunctions[currentShapeIndex]();
+                particles.forEach((particle, i) => {
+                    const p = newShapePoints[i % newShapePoints.length];
+                    particle.targetX = p.x;
+                    particle.targetY = p.y;
+                    particle.targetZ = p.z;
+                });
+            }
+            
+            function updateInfoDisplay() {
+                infoDisplay.textContent = `Shape: ${shapeNames[currentShapeIndex]}`;
+            }
+
+            function animate() {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+                ctx.fillRect(0, 0, width, height);
+
+                if (!isDragging) { // Only auto-rotate if not dragging
+                    angleY += AUTO_ROTATION_SPEED_Y;
+                }
+                // angleX auto-rotation is off for manual control via drag
+
+                particles.forEach(p => p.draw(ctx));
+
+                if (isMorphing) {
+                    morphProgress++;
+                    if (morphProgress >= MORPH_DURATION) {
+                        isMorphing = false;
+                        morphProgress = 0;
+                        updateInfoDisplay();
+                        particles.forEach(particle => {
+                            particle.currentX = particle.targetX;
+                            particle.currentY = particle.targetY;
+                            particle.currentZ = particle.targetZ;
+                        });
+                    }
+                }
+                requestAnimationFrame(animate);
+            }
+
+            changeShapeButton.addEventListener('click', () => {
+                const nextShapeIndex = (currentShapeIndex + 1) % shapeFunctions.length;
+                triggerMorph(nextShapeIndex);
+            });
+
+            colorButtons.forEach(button => {
+                button.addEventListener('click', () => {
+                    currentColorTheme = button.dataset.color;
+                    colorButtons.forEach(btn => btn.classList.remove('active'));
+                    button.classList.add('active');
+                });
+            });
+            document.querySelector(`.color-button[data-color="${currentColorTheme}"]`).classList.add('active');
+
+            // --- Mouse Drag Event Listeners ---
+            canvas.addEventListener('mousedown', (e) => {
+                isDragging = true;
+                lastMouseX = e.clientX;
+                lastMouseY = e.clientY;
+                canvas.style.cursor = 'grabbing'; // Change cursor to indicate dragging
+            });
+
+            canvas.addEventListener('mousemove', (e) => {
+                if (isDragging) {
+                    const deltaX = e.clientX - lastMouseX;
+                    const deltaY = e.clientY - lastMouseY;
+
+                    angleY += deltaX * DRAG_SENSITIVITY;
+                    angleX -= deltaY * DRAG_SENSITIVITY; // Dragging mouse down tilts shape top towards you
+
+                    // Clamp angleX to prevent extreme flipping (approx -90 to +90 degrees)
+                    angleX = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, angleX));
+
+                    lastMouseX = e.clientX;
+                    lastMouseY = e.clientY;
+                }
+            });
+
+            const stopDragging = () => {
+                if (isDragging) {
+                    isDragging = false;
+                    canvas.style.cursor = 'grab'; // Reset cursor
+                }
+            };
+
+            canvas.addEventListener('mouseup', stopDragging);
+            canvas.addEventListener('mouseleave', stopDragging); // Also stop if mouse leaves canvas while dragging
+
+            window.addEventListener('resize', () => {
+                width = canvas.width = window.innerWidth;
+                height = canvas.height = window.innerHeight;
+                // Note: PERSPECTIVE is based on initial width, might want to update it on resize
+                // For simplicity, we'll leave it, but for perfect scaling, it should be recalculated.
+            });
+
+            initParticles();
+            animate();
+        });
+    </script>
+</body>
+</html> 
